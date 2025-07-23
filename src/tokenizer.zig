@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const Error = error{ScanError};
 const special_chars = [_]u8{
     '*',
     '|',
@@ -9,6 +10,7 @@ const special_chars = [_]u8{
     ')',
     '[',
     ']',
+    '^',
 };
 
 pub const Kind = enum {
@@ -20,6 +22,7 @@ pub const Kind = enum {
     RIGHT_PAREN,
     RIGHT_SQUARED_BRACKET,
     LEFT_SQARED_BRACKET,
+    CARET,
     CHAR,
     EOP,
 };
@@ -66,17 +69,26 @@ pub const Tokenizer = struct {
                 '[' => self.tokens.append(Token.create(.LEFT_SQARED_BRACKET, null)),
                 ']' => self.tokens.append(Token.create(.RIGHT_SQUARED_BRACKET, null)),
                 '-' => self.tokens.append(Token.create(.MINUS, null)),
+                '^' => self.tokens.append(Token.create(.CARET, null)),
                 'a'...'z',
                 'A'...'Z',
                 '0'...'9',
                 => try self.tokens.append(Token.create(.CHAR, c)),
                 '\\' => {
-                    _ = self.advance();
-                    if (!self.isAtEnd()) try self.tokens.append(Token.create(.CHAR, c));
+                    self.advance();
+                    if (!self.isAtEnd()) {
+                        if (std.ascii.isAscii(self.peek())) {
+                            try self.tokens.append(Token.create(.CHAR, self.peek()));
+                        } else {
+                            return Error.ScanError;
+                        }
+                    }
                 },
                 else => {
-                    if (!isSpecialChar(c)) {
+                    if (!isSpecialChar(c) and std.ascii.isAscii(c)) {
                         try self.tokens.append(Token.create(.CHAR, c));
+                    } else {
+                        return Error.ScanError;
                     }
                 },
             };
@@ -138,16 +150,46 @@ test "scanTokens" {
     }
 
     {
-        const expected_token = [_]Kind{ .CHAR, .PIPE, .CHAR, .KLEENE_STAR, .CHAR, .EOP };
-        const pattern = "a|B*7\\";
+        const expected_token = [_]Kind{ .CHAR, .EOP };
+        const pattern = "\\(";
         var tokenizer = Tokenizer.init(pattern, allocator);
         defer tokenizer.deinit();
 
         const tokens = try tokenizer.scanTokens();
 
-        try std.testing.expectEqual(6, tokens.len);
+        try std.testing.expectEqual(2, tokens.len);
         for (tokens, 0..) |token, i| {
             try std.testing.expectEqual(expected_token[i], token.kind);
         }
+    }
+
+    {
+        const expected_token = [_]Kind{ .CHAR, .PIPE, .CHAR, .KLEENE_STAR, .CHAR, .CHAR, .EOP };
+        const pattern = "a|B*7\\(";
+        var tokenizer = Tokenizer.init(pattern, allocator);
+        defer tokenizer.deinit();
+
+        const tokens = try tokenizer.scanTokens();
+
+        try std.testing.expectEqual(7, tokens.len);
+        for (tokens, 0..) |token, i| {
+            try std.testing.expectEqual(expected_token[i], token.kind);
+        }
+    }
+
+    {
+        const pattern = "è";
+        var tokenizer = Tokenizer.init(pattern, allocator);
+        defer tokenizer.deinit();
+
+        try std.testing.expectError(Error.ScanError, tokenizer.scanTokens());
+    }
+
+    {
+        const pattern = "7\\è";
+        var tokenizer = Tokenizer.init(pattern, allocator);
+        defer tokenizer.deinit();
+
+        try std.testing.expectError(Error.ScanError, tokenizer.scanTokens());
     }
 }
