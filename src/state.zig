@@ -66,7 +66,7 @@ pub const State = struct {
         }
 
         const current_symbol = string[0];
-        const left_symbols = std.mem.trimLeft(u8, string, &[_]u8{current_symbol});
+        const left_symbols = string[1..];
         const alphabet_transitions: ?AutoHashMap(*State, void) = self.transitions.get(.{ .alphabet = current_symbol });
 
         if (alphabet_transitions) |transitions| {
@@ -198,6 +198,24 @@ test "transits" {
 
         for (test_cases) |tc| {
             try std.testing.expect(try in.transits(tc, null));
+        }
+    }
+
+    {
+        const test_cases = [_][]const u8{ "", "aa" };
+
+        const a: Symbol = .{ .alphabet = 'a' };
+
+        var in = State.init(allocator);
+        defer in.deinit();
+        var out = State.init(allocator);
+        defer out.deinit();
+        out.is_accepting = true;
+
+        try in.addTransition(a, &out);
+
+        for (test_cases) |tc| {
+            try std.testing.expect(!try in.transits(tc, null));
         }
     }
 }
