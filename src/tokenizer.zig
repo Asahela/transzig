@@ -1,17 +1,8 @@
 const std = @import("std");
+const Error = @import("error.zig").Error;
+const reportError = @import("error.zig").reportError;
 
-const Error = error{ScanError};
-const special_chars = [_]u8{
-    '*',
-    '|',
-    '+',
-    '-',
-    '(',
-    ')',
-    '[',
-    ']',
-    '^',
-};
+const special_chars = [_]u8{ '*', '|' };
 
 pub const Kind = enum {
     KLEENE_STAR,
@@ -63,13 +54,6 @@ pub const Tokenizer = struct {
             try switch (c) {
                 '*' => self.tokens.append(Token.create(.KLEENE_STAR, null)),
                 '|' => self.tokens.append(Token.create(.PIPE, null)),
-                '+' => self.tokens.append(Token.create(.PLUS, null)),
-                '(' => self.tokens.append(Token.create(.LEFT_PAREN, null)),
-                ')' => self.tokens.append(Token.create(.RIGHT_PAREN, null)),
-                '[' => self.tokens.append(Token.create(.LEFT_SQARED_BRACKET, null)),
-                ']' => self.tokens.append(Token.create(.RIGHT_SQUARED_BRACKET, null)),
-                '-' => self.tokens.append(Token.create(.MINUS, null)),
-                '^' => self.tokens.append(Token.create(.CARET, null)),
                 'a'...'z',
                 'A'...'Z',
                 '0'...'9',
@@ -80,6 +64,7 @@ pub const Tokenizer = struct {
                         if (std.ascii.isAscii(self.peek())) {
                             try self.tokens.append(Token.create(.CHAR, self.peek()));
                         } else {
+                            try reportError("Unexpected symbol.");
                             return Error.ScanError;
                         }
                     }
@@ -88,6 +73,7 @@ pub const Tokenizer = struct {
                     if (!isSpecialChar(c) and std.ascii.isAscii(c)) {
                         try self.tokens.append(Token.create(.CHAR, c));
                     } else {
+                        try reportError("Unexpected symbol.");
                         return Error.ScanError;
                     }
                 },
