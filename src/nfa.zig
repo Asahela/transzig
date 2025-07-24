@@ -54,10 +54,11 @@ pub fn alternationPair(first: *Nfa, second: *Nfa, allocator: std.mem.Allocator) 
     return nfa;
 }
 
-pub fn alternation(first: *Nfa, secondaries: []*Nfa, allocator: std.mem.Allocator) !*Nfa {
-    var nfa: *Nfa = first;
-    for (secondaries) |secondary| {
-        nfa = try alternationPair(nfa, secondary, allocator);
+pub fn alternation(entries: []*Nfa, allocator: std.mem.Allocator) !*Nfa {
+    var nfa: *Nfa = entries[0];
+    const rest = entries[1..];
+    for (rest) |entry| {
+        nfa = try alternationPair(nfa, entry, allocator);
     }
     return nfa;
 }
@@ -83,42 +84,47 @@ pub fn disjunctionPair(first: *Nfa, second: *Nfa, allocator: std.mem.Allocator) 
     return nfa;
 }
 
-pub fn disjunction(first: *Nfa, secondaries: []*Nfa, allocator: std.mem.Allocator) !*Nfa {
-    var nfa = first;
-    for (secondaries) |secondary| {
-        nfa = try disjunctionPair(nfa, secondary, allocator);
+pub fn disjunction(entries: []*Nfa, allocator: std.mem.Allocator) !*Nfa {
+    var nfa: *Nfa = entries[0];
+    const rest = entries[1..];
+    for (rest) |entry| {
+        nfa = try disjunctionPair(nfa, entry, allocator);
     }
     return nfa;
 }
 
 test "matches" {
-    const abc = "abc";
-    const dddd = "dddd";
-    const eof = "";
-    const mm = "mm";
+    const Tokenizer = @import("tokenizer.zig").Tokenizer;
+    const Parser = @import("parser.zig").Parser;
+    const NfaBuilder = @import("nfa_builder.zig").NfaBuilder;
+    const allocator = std.testing.allocator;
 
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
+    {
+        const test_cases = [_]struct {
+            pattern: []const u8,
+            strings: []const []const u8,
+            expected: []const bool,
+        }{
+            .{ .pattern = "a", .strings = &[_][]const u8{ "a", "", "b" }, .expected = &[_]bool{ true, false, false } },
+            .{ .pattern = "a*", .strings = &[_][]const u8{ "", "aa", "ab" }, .expected = &[_]bool{ true, true, false } },
+            .{ .pattern = "ab", .strings = &[_][]const u8{ "ab", "a", "b" }, .expected = &[_]bool{ true, false, false } },
+            .{ .pattern = "a|b", .strings = &[_][]const u8{ "ab", "a", "ac" }, .expected = &[_]bool{ false, true, false } },
+        };
 
-    var abcOrdddd = try disjunction(
-        try alternation(
-            try char('a', arena.allocator()),
-            @constCast(&[_]*Nfa{
-                try char('b', arena.allocator()),
-                try char('c', arena.allocator()),
-            }),
-            arena.allocator(),
-        ),
-        @constCast(
-            &[_]*Nfa{
-                try repetition(try char('d', arena.allocator())),
-            },
-        ),
-        arena.allocator(),
-    );
+        for (test_cases) |tc| {
+            var tokenizer = Tokenizer.init(tc.pattern, allocator);
+            defer tokenizer.deinit();
+            const tokens = try tokenizer.scanTokens();
+            var parser = Parser.init(tokens);
+            defer parser.deinit();
+            const parse_tree = try parser.parse();
+            var builder = NfaBuilder.init(parse_tree);
+            defer builder.deinit();
+            const nfa = try builder.build();
 
-    try std.testing.expect(try abcOrdddd.matches(abc));
-    try std.testing.expect(try abcOrdddd.matches(dddd));
-    try std.testing.expect(try abcOrdddd.matches(eof));
-    try std.testing.expect(!try abcOrdddd.matches(mm));
+            for (tc.strings, 0..) |string, i| {
+                try std.testing.expectEqual(tc.expected[i], try nfa.matches(string));
+            }
+        }
+    }
 }
