@@ -1,79 +1,53 @@
 const std = @import("std");
-const Nfa = @import("nfa.zig").Nfa;
-const State = @import("state.zig").State;
-const Symbol = @import("symbol.zig").Symbol;
-const SymbolTag = @import("symbol.zig").SymbolTag;
+const nfa = @import("nfa.zig");
+const ast = @import("ast.zig");
 
-pub fn char(character: u8, allocator: std.mem.Allocator) !*Nfa {
-    const in_state = try allocator.create(State);
-    const out_state = try allocator.create(State);
-    in_state.* = State.init(allocator);
-    out_state.* = State.init(allocator);
+pub const NfaBuilder = struct {
+    arena: std.heap.ArenaAllocator,
+    pattern: *const ast.RegExp,
 
-    out_state.is_accepting = true;
-
-    try in_state.addTransition(.{ .alphabet = character }, out_state);
-
-    const nfa = try allocator.create(Nfa);
-    nfa.* = Nfa.create(in_state, out_state);
-    return nfa;
-}
-
-pub fn epsilon(allocator: std.mem.Allocator) !*Nfa {
-    return try char(.{ .epsilon = {} }, allocator);
-}
-
-pub fn concatPair(first: *Nfa, second: *Nfa, allocator: std.mem.Allocator) !*Nfa {
-    first.out.is_accepting = false;
-    second.out.is_accepting = true;
-
-    try first.out.addTransition(.{ .epsilon = {} }, second.in);
-
-    const nfa = try allocator.create(Nfa);
-    nfa.* = Nfa.create(first.in, second.out);
-    return nfa;
-}
-
-pub fn concatOp(first: *Nfa, secondaries: []*Nfa, allocator: std.mem.Allocator) !*Nfa {
-    var nfa: *Nfa = first;
-    for (secondaries) |secondary| {
-        nfa = try concatPair(nfa, secondary, allocator);
+    pub fn init(pattern: *const ast.RegExp) NfaBuilder {
+        return .{
+            .arena = std.heap.ArenaAllocator.init(std.heap.page_allocator),
+            .pattern = pattern,
+        };
     }
-    return nfa;
-}
 
-pub fn orPair(first: *Nfa, second: *Nfa, allocator: std.mem.Allocator) !*Nfa {
-    first.out.is_accepting = false;
-    second.out.is_accepting = false;
-
-    const in_state = try allocator.create(State);
-    const out_state = try allocator.create(State);
-    in_state.* = State.init(allocator);
-    out_state.* = State.init(allocator);
-
-    out_state.is_accepting = true;
-
-    try in_state.addTransition(.{ .epsilon = {} }, first.in);
-    try in_state.addTransition(.{ .epsilon = {} }, second.in);
-    try first.out.addTransition(.{ .epsilon = {} }, out_state);
-    try second.out.addTransition(.{ .epsilon = {} }, out_state);
-
-    const nfa = try allocator.create(Nfa);
-    nfa.* = Nfa.create(in_state, out_state);
-    return nfa;
-}
-
-pub fn orOp(first: *Nfa, secondaries: []*Nfa, allocator: std.mem.Allocator) !*Nfa {
-    var nfa = first;
-    for (secondaries) |secondary| {
-        nfa = try orPair(nfa, secondary, allocator);
+    pub fn deinit(self: *NfaBuilder) void {
+        self.arena.deinit();
     }
-    return nfa;
-}
 
-pub fn repOp(nfa: *Nfa) !*Nfa {
-    try nfa.in.addTransition(.{ .epsilon = {} }, nfa.out);
-    try nfa.out.addTransition(.{ .epsilon = {} }, nfa.in);
+    pub fn build(self: *NfaBuilder) !*nfa.Nfa {
+        return try self.buildFrom(self.pattern);
+    }
 
-    return nfa;
-}
+    pub fn buildFrom(self: *NfaBuilder, exp: *const ast.RegExp) anyerror!*nfa.Nfa {
+        return try switch (exp.*) {
+            .disjunction => |dis_ast| self.buildDis(dis_ast),
+            .alternation => |alt_ast| self.buildAlt(alt_ast),
+            .repetition => |rep_ast| self.buildRep(rep_ast),
+            .char => |char_ast| self.buildChar(char_ast),
+        };
+    }
+
+    fn buildDis(self: *NfaBuilder, exp: ast.Disjunction) !*nfa.Nfa {
+        return try nfa.disjunctionPair(try self.buildFrom(exp.left), try self.buildFrom(exp.right), self.arena.allocator());
+    }
+
+    fn buildAlt(self: *NfaBuilder, alts: ast.Alternation) !*nfa.Nfa {
+        var alt_entries = std.ArrayList(*nfa.Nfa).init(self.arena.allocator());
+        for (alts.expressions) |alt| {
+            try alt_entries.append(try self.buildFrom(alt));
+        }
+
+        return try nfa.alternation(alt_entries.items, self.arena.allocator());
+    }
+
+    fn buildRep(self: *NfaBuilder, rep: ast.Repetition) !*nfa.Nfa {
+        return try nfa.repetition(try self.buildFrom(rep.expression));
+    }
+
+    fn buildChar(self: *NfaBuilder, char: ast.Char) !*nfa.Nfa {
+        return try nfa.char(char.value, self.arena.allocator());
+    }
+};
